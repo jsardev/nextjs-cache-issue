@@ -42,25 +42,36 @@ export class StorageService {
     fn: (...args: A) => Promise<T>,
     key: string,
   ): [Memoized<(...args: A) => Promise<T>>, (...args: A) => Promise<T>] {
+    const cachedFn = memoize(
+      async (...args: A): Promise<T> => {
+        log("executing cached fn");
+        const existing = await this.get<T>(key);
+        log("cached fn result", { key, existing });
+        if (existing !== undefined) {
+          return existing;
+        }
+        return revalidateFn(...args);
+      },
+      { isPromise: true },
+    );
+
     const revalidateFn = async (...args: A): Promise<T> => {
       log("executing revalidate fn");
       const result = await fn(...args);
       log("revalidate result", { result });
       if (result) {
+        const getCacheKeyIndex = this.get.cache.getKeyIndex([key]);
+        if (getCacheKeyIndex !== -1) {
+          this.get.cache.keys.splice(getCacheKeyIndex, 1);
+          this.get.cache.values.splice(getCacheKeyIndex, 1);
+          log("clear get cache", { getCacheKeyIndex });
+        }
+        cachedFn.cache.keys.length = 0;
+        cachedFn.cache.values.length = 0;
         await this.set(key, result);
       }
       return result;
     };
-
-    const cachedFn = memoize(async (...args: A): Promise<T> => {
-      log("executing cached fn");
-      const existing = await this.get<T>(key);
-      log("cached fn result", { key, existing });
-      if (existing !== undefined) {
-        return existing;
-      }
-      return revalidateFn(...args);
-    });
 
     return [cachedFn, revalidateFn];
   }
